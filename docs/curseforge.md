@@ -22,12 +22,14 @@ See which mobs are quest mobs without hovering over them one by one. Quest Mob M
 - The mark disappears as soon as your objective for that mob is done
 - No quest database: it reads what the game itself says in the mob's tooltip
 - In a group only your own progress counts
-- Adjustable size and position
+- Shows your progress next to the mark (3/8), or how many you still need
+- Settings window with live preview: position, size, text size and colour, opacity, hide in combat
 
 Nameplates have to be on (default key: V).
 
 ## Commands
 
+- `/qmm`: open the settings window
 - `/qmm on` / `/qmm off`: turn the marks on or off
 - `/qmm size <8-64>`: size of the mark
 - `/qmm pos <x> <y>`: move the mark

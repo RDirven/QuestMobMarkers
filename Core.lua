@@ -9,8 +9,22 @@ local ADDON = ...
 local QM = {}
 _G.QuestMobMarkers = QM
 
-local DEFAULTS = { enabled = true, size = 22, x = -2, y = 0 }
+local DEFAULTS = {
+	enabled = true,
+	showIcon = true,        -- the yellow !
+	showProgress = true,    -- "3/8" next to it
+	format = "count",       -- "count" = 3/8, "left" = how many still to go
+	side = "LEFT",          -- LEFT / RIGHT / TOP of the health bar
+	size = 22,              -- icon size
+	textSize = 12,
+	x = 0, y = 0,
+	alpha = 1,
+	r = 1, g = 0.82, b = 0, -- progress text colour
+	hideInCombat = false,
+}
+QM.DEFAULTS = DEFAULTS
 local db
+local inCombat = false
 
 local function Print(msg)
 	DEFAULT_CHAT_FRAME:AddMessage("|cffffd100Quest Mob Markers|r: " .. tostring(msg))
@@ -125,22 +139,31 @@ local function RebuildGroupNames()
 end
 
 -- true = still to do, false = done, nil = this line shows no progress.
+-- Second result: the progress as { cur, max, pct = true|nil } when known.
 local function LineOpen(line)
 	if line.completed == true then return false end
 	local cur, max = line.text:match("(%d+)%s*/%s*(%d+)")
-	if cur then return tonumber(cur) < tonumber(max) end
+	if cur then
+		cur, max = tonumber(cur), tonumber(max)
+		return cur < max, { cur = cur, max = max }
+	end
 	local pct = line.text:match("(%d+)%s*%%")
-	if pct then return tonumber(pct) < 100 end
+	if pct then
+		pct = tonumber(pct)
+		return pct < 100, { cur = pct, max = 100, pct = true }
+	end
 	if line.kind == "objective" then return true end
 	return nil
 end
 
 -- Does this tooltip say I still need this unit for a quest?
+-- Also returns the progress of my first unfinished objective, when known.
 local function LinesNeedUnit(lines)
 	local myName = UnitName("player")
 	local inQuest, mine = false, true
 	local myLines, otherLines, anyOpen = 0, 0, false
 	local need = false
+	local progress
 
 	local function CloseQuest()
 		if inQuest and (anyOpen or (myLines == 0 and otherLines == 0)) then need = true end
@@ -160,11 +183,14 @@ local function LinesNeedUnit(lines)
 		elseif kind == "player" then
 			mine = (line.text == myName)
 		elseif inQuest then
-			local open = LineOpen(line)
+			local open, prog = LineOpen(line)
 			if open ~= nil then
 				if mine then
 					myLines = myLines + 1
-					if open then anyOpen = true end
+					if open then
+						anyOpen = true
+						progress = progress or prog
+					end
 				else
 					otherLines = otherLines + 1
 				end
@@ -172,15 +198,19 @@ local function LinesNeedUnit(lines)
 		end
 	end
 	CloseQuest()
-	return need
+	return need, progress
 end
 
+-- Returns: needed (bool), how it was detected, progress table or nil.
 local function UnitIsQuestMob(unit)
 	local isPlayer = UnitIsPlayer(unit)
 	if not IsSecret(isPlayer) and isPlayer then return false end
 
 	local lines, method = TooltipLines(unit)
-	if lines then return LinesNeedUnit(lines), method end
+	if lines then
+		local need, progress = LinesNeedUnit(lines)
+		return need, method, progress
+	end
 
 	-- No readable tooltip: ask the game directly if this client can.
 	if C_QuestLog and C_QuestLog.UnitIsRelatedToActiveQuest then
@@ -197,44 +227,91 @@ end
 local marks = {}   -- nameplate frame -> mark frame
 local units = {}   -- unit token -> true, for every visible nameplate
 
-local function ApplyLayout(mark, plate)
-	local uf = plate.UnitFrame
-	local bar = uf and (uf.healthBar or uf.HealthBarsContainer or uf.healthbar)
-	mark:ClearAllPoints()
-	mark:SetSize(db.size, db.size)
-	mark:SetPoint("RIGHT", bar or plate, "LEFT", db.x, db.y)
+local GAP = 2 -- pixels between the health bar and the mark
+
+local function ProgressText(progress)
+	if not (db.showProgress and progress) then return "" end
+	local cur, max = progress.cur, progress.max
+	if db.format == "left" then
+		return (max - cur) .. (progress.pct and "%" or "")
+	end
+	if progress.pct then return cur .. "%" end
+	return cur .. "/" .. max
 end
 
-local function GetMark(plate)
-	local mark = marks[plate]
-	if mark then return mark end
-
-	mark = CreateFrame("Frame", nil, plate)
-	mark:SetFrameStrata("HIGH")
+-- A mark is the ! plus the progress text. Also used for the preview in the
+-- settings window, so it takes any parent.
+function QM.CreateMark(parent)
+	local mark = CreateFrame("Frame", nil, parent)
+	mark:SetFrameLevel(parent:GetFrameLevel() + 10)
 	mark.icon = mark:CreateTexture(nil, "OVERLAY")
 	mark.icon:SetAllPoints()
 	local loaded = mark.icon:SetTexture("Interface\\GossipFrame\\AvailableQuestIcon")
 	if loaded == false then
 		-- Texture missing in this client: draw the ! as text instead.
 		mark.icon:Hide()
-		mark.text = mark:CreateFontString(nil, "OVERLAY")
-		mark.text:SetFont(STANDARD_TEXT_FONT, 24, "OUTLINE")
-		mark.text:SetTextColor(1, 0.82, 0)
-		mark.text:SetText("!")
-		mark.text:SetPoint("CENTER")
+		mark.icon = mark:CreateFontString(nil, "OVERLAY")
+		mark.icon:SetTextColor(1, 0.82, 0)
+		mark.icon:SetPoint("CENTER")
+		mark.iconIsText = true
 	end
+	mark.text = mark:CreateFontString(nil, "OVERLAY")
 	mark:Hide()
-	marks[plate] = mark
 	return mark
+end
+
+-- Lay a mark out against the health bar (or whatever stands in for it).
+function QM.RenderMark(mark, anchor, progress)
+	local side = db.side
+	mark:ClearAllPoints()
+	mark:SetSize(db.size, db.size)
+	mark:SetAlpha(db.alpha)
+	if side == "RIGHT" then
+		mark:SetPoint("LEFT", anchor, "RIGHT", GAP + db.x, db.y)
+	elseif side == "TOP" then
+		mark:SetPoint("BOTTOM", anchor, "TOP", db.x, 14 + db.y)
+	else
+		mark:SetPoint("RIGHT", anchor, "LEFT", -GAP + db.x, db.y)
+	end
+
+	local label = ProgressText(progress)
+	-- With nothing to write the ! always shows, or the mob would get no mark.
+	local showIcon = db.showIcon or label == ""
+	if mark.iconIsText then
+		mark.icon:SetFont(STANDARD_TEXT_FONT, db.size, "OUTLINE")
+		mark.icon:SetText("!")
+	end
+	if showIcon then mark.icon:Show() else mark.icon:Hide() end
+
+	local text = mark.text
+	text:SetFont(STANDARD_TEXT_FONT, db.textSize, "OUTLINE")
+	text:SetTextColor(db.r, db.g, db.b)
+	text:SetText(label)
+	text:ClearAllPoints()
+	if side == "LEFT" then
+		text:SetPoint("RIGHT", mark, showIcon and "LEFT" or "RIGHT", showIcon and -1 or 0, 0)
+	else
+		text:SetPoint("LEFT", mark, showIcon and "RIGHT" or "LEFT", showIcon and 1 or 0, 0)
+	end
 end
 
 local function UpdateUnit(unit)
 	local plate = C_NamePlate.GetNamePlateForUnit(unit)
 	if not plate then return end
-	local show = db.enabled and UnitIsQuestMob(unit)
-	if show then
-		local mark = GetMark(plate)
-		ApplyLayout(mark, plate)
+	local need, progress = false, nil
+	if db.enabled and not (db.hideInCombat and inCombat) then
+		local _
+		need, _, progress = UnitIsQuestMob(unit)
+	end
+	if need then
+		local mark = marks[plate]
+		if not mark then
+			mark = QM.CreateMark(plate)
+			marks[plate] = mark
+		end
+		local uf = plate.UnitFrame
+		local bar = uf and (uf.healthBar or uf.HealthBarsContainer or uf.healthbar)
+		QM.RenderMark(mark, bar or plate, progress)
 		mark:Show()
 	elseif marks[plate] then
 		marks[plate]:Hide()
@@ -243,6 +320,12 @@ end
 
 local function UpdateAll()
 	for unit in pairs(units) do UpdateUnit(unit) end
+end
+
+-- Called by the settings window after every change.
+function QM.Apply()
+	UpdateAll()
+	if QM.RefreshPreview then QM.RefreshPreview() end
 end
 
 -- Quest events come in bursts; refresh once, a moment later.
@@ -277,6 +360,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
 		for k, v in pairs(DEFAULTS) do
 			if db[k] == nil then db[k] = v end
 		end
+		QM.db = db
 		frame:UnregisterEvent("ADDON_LOADED")
 		if not (C_NamePlate and C_NamePlate.GetNamePlateForUnit) then
 			Print("this client has no nameplate API, the addon can't work here.")
@@ -291,6 +375,11 @@ frame:SetScript("OnEvent", function(_, event, arg1)
 		Register("QUEST_REMOVED")
 		Register("QUEST_TURNED_IN")
 		Register("GROUP_ROSTER_UPDATE")
+		Register("PLAYER_REGEN_DISABLED")
+		Register("PLAYER_REGEN_ENABLED")
+	elseif event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
+		inCombat = (event == "PLAYER_REGEN_DISABLED")
+		if db.hideInCombat then UpdateAll() end
 	elseif event == "NAME_PLATE_UNIT_ADDED" then
 		units[arg1] = true
 		UpdateUnit(arg1)
@@ -337,7 +426,10 @@ SLASH_QUESTMOBMARKERS1 = "/qmm"
 SLASH_QUESTMOBMARKERS2 = "/questmobmarkers"
 SlashCmdList.QUESTMOBMARKERS = function(msg)
 	local cmd, rest = (msg or ""):lower():match("^%s*(%S*)%s*(.-)%s*$")
-	if cmd == "on" or cmd == "off" then
+	if cmd == "" then
+		if QM.ToggleOptions then QM.ToggleOptions() end
+		return
+	elseif cmd == "on" or cmd == "off" then
 		db.enabled = (cmd == "on")
 		Print(db.enabled and "on." or "off.")
 	elseif cmd == "size" and tonumber(rest) then
@@ -345,15 +437,15 @@ SlashCmdList.QUESTMOBMARKERS = function(msg)
 		Print("size " .. db.size .. ".")
 	elseif cmd == "pos" then
 		local x, y = rest:match("^(-?%d+)%s+(-?%d+)$")
-		if not x then Print("usage: /qmm pos <x> <y>   (default -2 0)") return end
+		if not x then Print("usage: /qmm pos <x> <y>   (default 0 0)") return end
 		db.x, db.y = tonumber(x), tonumber(y)
 		Print(("position %d, %d."):format(db.x, db.y))
 	elseif cmd == "debug" then
 		Debug()
 		return
 	else
-		Print("/qmm on | off  -  /qmm size <8-64>  -  /qmm pos <x> <y>  -  /qmm debug")
+		Print("/qmm (settings)  -  /qmm on | off  -  /qmm size <8-64>  -  /qmm pos <x> <y>  -  /qmm debug")
 		return
 	end
-	UpdateAll()
+	QM.Apply()
 end

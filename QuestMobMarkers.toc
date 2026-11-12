@@ -7,3 +7,4 @@
 ## X-Curse-Project-ID: 1800840
 
 Core.lua
+Options.lua
