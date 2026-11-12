@@ -4,5 +4,6 @@
 ## Author: Robert-Jan
 ## Version: @project-version@
 ## SavedVariables: QuestMobMarkersDB
+## X-Curse-Project-ID: 1800840
 
 Core.lua
