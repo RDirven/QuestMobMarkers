@@ -11,11 +11,12 @@ local FORMATS = { "count", "left" }
 local FORMAT_NAMES = { count = "Progress (3/8)", left = "Still to go (5)" }
 
 local PREVIEW_PROGRESS = { cur = 3, max = 8 }
+local PREVIEW_OTHERS = { { name = "Friend", cur = 1, max = 8 } }
 
 function QM.RefreshPreview()
 	if not (preview and panel and panel:IsShown()) then return end
 	if QM.db.enabled then
-		QM.RenderMark(preview.mark, preview.bar, PREVIEW_PROGRESS)
+		QM.RenderMark(preview.mark, preview.bar, PREVIEW_PROGRESS, PREVIEW_OTHERS, false)
 		preview.mark:Show()
 	else
 		preview.mark:Hide()
@@ -107,17 +108,17 @@ local function MakeCycle(label, key, values, names, x, y)
 	return b
 end
 
-local function OpenColorPicker()
+local function OpenColorPicker(swatch, rk, gk, bk)
 	local db = QM.db
-	local oldR, oldG, oldB = db.r, db.g, db.b
+	local oldR, oldG, oldB = db[rk], db[gk], db[bk]
 	local function OnChange()
-		db.r, db.g, db.b = ColorPickerFrame:GetColorRGB()
-		widgets.swatch:Refresh()
+		db[rk], db[gk], db[bk] = ColorPickerFrame:GetColorRGB()
+		swatch:Refresh()
 		QM.Apply()
 	end
 	local function OnCancel()
-		db.r, db.g, db.b = oldR, oldG, oldB
-		widgets.swatch:Refresh()
+		db[rk], db[gk], db[bk] = oldR, oldG, oldB
+		swatch:Refresh()
 		QM.Apply()
 	end
 	if ColorPickerFrame.SetupColorPickerAndShow then
@@ -136,6 +137,25 @@ local function OpenColorPicker()
 		ColorPickerFrame:Hide()
 		ColorPickerFrame:Show()
 	end
+end
+
+local function MakeSwatch(label, rk, gk, bk, x, y)
+	local swatch = CreateFrame("Button", nil, panel)
+	swatch:SetPoint("TOPLEFT", x, y)
+	swatch:SetSize(22, 22)
+	local border = swatch:CreateTexture(nil, "BACKGROUND")
+	border:SetAllPoints()
+	border:SetColorTexture(0.6, 0.6, 0.6, 1)
+	local fill = swatch:CreateTexture(nil, "ARTWORK")
+	fill:SetPoint("TOPLEFT", 2, -2)
+	fill:SetPoint("BOTTOMRIGHT", -2, 2)
+	local fs = swatch:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	fs:SetPoint("LEFT", swatch, "RIGHT", 6, 0)
+	fs:SetText(label)
+	swatch:SetScript("OnClick", function(self) OpenColorPicker(self, rk, gk, bk) end)
+	swatch.Refresh = function() fill:SetColorTexture(QM.db[rk], QM.db[gk], QM.db[bk], 1) end
+	widgets["swatch_" .. rk] = swatch
+	return swatch
 end
 
 ---------------------------------------------------------------------------
@@ -173,7 +193,7 @@ end
 
 local function BuildPanel()
 	panel = CreateFrame("Frame", "QuestMobMarkersFrame", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
-	panel:SetSize(320, 530)
+	panel:SetSize(320, 558)
 	panel:SetPoint("CENTER")
 	panel:SetFrameStrata("DIALOG")
 	panel:SetMovable(true)
@@ -206,32 +226,19 @@ local function BuildPanel()
 	MakeCheck("Hide in combat", "hideInCombat", 160, -132)
 	MakeCheck("Show the !", "showIcon", 12, -160)
 	MakeCheck("Show progress", "showProgress", 160, -160)
+	MakeCheck("Show group progress", "showParty", 12, -188)
 
-	MakeCycle("Position", "side", SIDES, SIDE_NAMES, 16, -198)
-	MakeCycle("Progress shows", "format", FORMATS, FORMAT_NAMES, 164, -198)
+	MakeCycle("Position", "side", SIDES, SIDE_NAMES, 16, -226)
+	MakeCycle("Progress shows", "format", FORMATS, FORMAT_NAMES, 164, -226)
 
-	MakeSlider("Icon size", "size", 8, 64, 1, "%d px", -250)
-	MakeSlider("Text size", "textSize", 6, 32, 1, "%d px", -292)
-	MakeSlider("Move sideways", "x", -100, 100, 1, "%d px", -334)
-	MakeSlider("Move up / down", "y", -100, 100, 1, "%d px", -376)
-	MakeSlider("Opacity", "alpha", 0.2, 1, 0.05, "%.2f", -418)
+	MakeSlider("Icon size", "size", 8, 64, 1, "%d px", -278)
+	MakeSlider("Text size", "textSize", 6, 32, 1, "%d px", -320)
+	MakeSlider("Move sideways", "x", -100, 100, 1, "%d px", -362)
+	MakeSlider("Move up / down", "y", -100, 100, 1, "%d px", -404)
+	MakeSlider("Opacity", "alpha", 0.2, 1, 0.05, "%.2f", -446)
 
-	-- text colour
-	local swatch = CreateFrame("Button", nil, panel)
-	swatch:SetPoint("TOPLEFT", 16, -462)
-	swatch:SetSize(22, 22)
-	local border = swatch:CreateTexture(nil, "BACKGROUND")
-	border:SetAllPoints()
-	border:SetColorTexture(0.6, 0.6, 0.6, 1)
-	local fill = swatch:CreateTexture(nil, "ARTWORK")
-	fill:SetPoint("TOPLEFT", 2, -2)
-	fill:SetPoint("BOTTOMRIGHT", -2, 2)
-	local swLabel = swatch:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	swLabel:SetPoint("LEFT", swatch, "RIGHT", 6, 0)
-	swLabel:SetText("Text colour")
-	swatch:SetScript("OnClick", OpenColorPicker)
-	swatch.Refresh = function() fill:SetColorTexture(QM.db.r, QM.db.g, QM.db.b, 1) end
-	widgets.swatch = swatch
+	MakeSwatch("Text colour", "r", "g", "b", 16, -490)
+	MakeSwatch("Group colour", "pr", "pg", "pb", 164, -490)
 
 	local reset = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 	reset:SetPoint("BOTTOMRIGHT", -14, 14)

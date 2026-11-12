@@ -21,6 +21,8 @@ local DEFAULTS = {
 	alpha = 1,
 	r = 1, g = 0.82, b = 0, -- progress text colour
 	hideInCombat = false,
+	showParty = true,       -- progress of group members, in their own colour
+	pr = 0.4, pg = 0.8, pb = 1,
 }
 QM.DEFAULTS = DEFAULTS
 local db
@@ -164,6 +166,9 @@ local function LinesNeedUnit(lines)
 	local myLines, otherLines, anyOpen, otherOpen = 0, 0, false, false
 	local need = false
 	local progress, otherProgress
+	local others = {}       -- unfinished progress of group members, one per player
+	local blockOthers = {}  -- the same, for the quest being read
+	local currentOther      -- whose lines are being read (nil = mine / unknown)
 
 	-- The name on a "whose progress is this" line, however the client writes
 	-- it: "Name", "Name-Realm" or "Name:".
@@ -177,28 +182,31 @@ local function LinesNeedUnit(lines)
 
 	local function CloseQuest()
 		if not inQuest then return end
-		if anyOpen or (myLines == 0 and otherLines == 0) then
-			need = true
-		elseif otherOpen and not sawMe then
+		if otherOpen and not sawMe and not anyOpen and myLines == 0 then
 			-- Only other names were listed, so the tooltip did not say which
 			-- lines are mine. Better a mark too many than none at all.
 			need = true
 			progress = progress or otherProgress
+		else
+			if anyOpen or (myLines == 0 and otherLines == 0) then need = true end
+			for _, o in ipairs(blockOthers) do others[#others + 1] = o end
 		end
+		blockOthers = {}
 	end
 
 	for _, line in ipairs(lines) do
 		local kind = line.kind
-		local isMe
+		local isMe, playerName
 		if kind == "player" then
 			local name, me = PlayerOn(line.text)
 			isMe = name ~= nil and me
+			playerName = name or line.text
 		elseif not kind then
 			if questTitles[line.text] then
 				kind = "title"
 			elseif inQuest and LineOpen(line) == nil then
 				local name, me = PlayerOn(line.text)
-				if name then kind, isMe = "player", me end
+				if name then kind, isMe, playerName = "player", me, name end
 			end
 		end
 
@@ -206,10 +214,11 @@ local function LinesNeedUnit(lines)
 			CloseQuest()
 			inQuest, mine, sawMe = true, true, false
 			myLines, otherLines, anyOpen, otherOpen = 0, 0, false, false
-			otherProgress = nil
+			otherProgress, currentOther = nil, nil
 		elseif kind == "player" then
 			mine = isMe
 			if isMe then sawMe = true end
+			currentOther = (not isMe) and { name = playerName } or nil
 		elseif inQuest then
 			local open, prog = LineOpen(line)
 			if open ~= nil then
@@ -224,13 +233,17 @@ local function LinesNeedUnit(lines)
 					if open then
 						otherOpen = true
 						otherProgress = otherProgress or prog
+						if prog and currentOther and not currentOther.cur then
+							currentOther.cur, currentOther.max, currentOther.pct = prog.cur, prog.max, prog.pct
+							blockOthers[#blockOthers + 1] = currentOther
+						end
 					end
 				end
 			end
 		end
 	end
 	CloseQuest()
-	return need, progress
+	return need, progress, others
 end
 
 -- Returns: needed (bool), how it was detected, progress table or nil.
@@ -240,8 +253,8 @@ local function UnitIsQuestMob(unit)
 
 	local lines, method = TooltipLines(unit)
 	if lines then
-		local need, progress = LinesNeedUnit(lines)
-		return need, method, progress
+		local need, progress, others = LinesNeedUnit(lines)
+		return need, method, progress, others
 	end
 
 	-- No readable tooltip: ask the game directly if this client can.
@@ -261,14 +274,26 @@ local units = {}   -- unit token -> true, for every visible nameplate
 
 local GAP = 2 -- pixels between the health bar and the mark
 
-local function ProgressText(progress)
-	if not (db.showProgress and progress) then return "" end
+local function FormatProgress(progress)
 	local cur, max = progress.cur, progress.max
 	if db.format == "left" then
 		return (max - cur) .. (progress.pct and "%" or "")
 	end
 	if progress.pct then return cur .. "%" end
 	return cur .. "/" .. max
+end
+
+local function ProgressText(progress)
+	if not (db.showProgress and progress) then return "" end
+	return FormatProgress(progress)
+end
+
+-- The progress of every group member that still needs the mob: "1/8 4/8".
+local function PartyText(others)
+	if not (db.showParty and others and #others > 0) then return "" end
+	local parts = {}
+	for i, o in ipairs(others) do parts[i] = FormatProgress(o) end
+	return table.concat(parts, " ")
 end
 
 -- A mark is the ! plus the progress text. Also used for the preview in the
@@ -283,17 +308,19 @@ function QM.CreateMark(parent)
 		-- Texture missing in this client: draw the ! as text instead.
 		mark.icon:Hide()
 		mark.icon = mark:CreateFontString(nil, "OVERLAY")
-		mark.icon:SetTextColor(1, 0.82, 0)
 		mark.icon:SetPoint("CENTER")
 		mark.iconIsText = true
 	end
 	mark.text = mark:CreateFontString(nil, "OVERLAY")
+	mark.party = mark:CreateFontString(nil, "OVERLAY")
 	mark:Hide()
 	return mark
 end
 
 -- Lay a mark out against the health bar (or whatever stands in for it).
-function QM.RenderMark(mark, anchor, progress)
+-- progress: mine (nil when I don't need the mob or it has no number).
+-- others: unfinished progress of group members. partyOnly: only they need it.
+function QM.RenderMark(mark, anchor, progress, others, partyOnly)
 	local side = db.side
 	mark:ClearAllPoints()
 	mark:SetSize(db.size, db.size)
@@ -306,36 +333,58 @@ function QM.RenderMark(mark, anchor, progress)
 		mark:SetPoint("RIGHT", anchor, "LEFT", -GAP + db.x, db.y)
 	end
 
-	local label = ProgressText(progress)
+	local label = partyOnly and "" or ProgressText(progress)
+	local partyLabel = PartyText(others)
 	-- With nothing to write the ! always shows, or the mob would get no mark.
-	local showIcon = db.showIcon or label == ""
+	local showIcon = db.showIcon or (label == "" and partyLabel == "")
+	local icon = mark.icon
 	if mark.iconIsText then
-		mark.icon:SetFont(STANDARD_TEXT_FONT, db.size, "OUTLINE")
-		mark.icon:SetText("!")
+		icon:SetFont(STANDARD_TEXT_FONT, db.size, "OUTLINE")
+		icon:SetText("!")
+		if partyOnly then icon:SetTextColor(db.pr, db.pg, db.pb) else icon:SetTextColor(1, 0.82, 0) end
+	else
+		-- A mob only the group still needs gets the ! in the party colour.
+		if icon.SetDesaturated then icon:SetDesaturated(partyOnly and true or false) end
+		if partyOnly then icon:SetVertexColor(db.pr, db.pg, db.pb) else icon:SetVertexColor(1, 1, 1) end
 	end
-	if showIcon then mark.icon:Show() else mark.icon:Hide() end
+	if showIcon then icon:Show() else icon:Hide() end
 
+	local toLeft = (side == "LEFT")
 	local text = mark.text
 	text:SetFont(STANDARD_TEXT_FONT, db.textSize, "OUTLINE")
 	text:SetTextColor(db.r, db.g, db.b)
 	text:SetText(label)
 	text:ClearAllPoints()
-	if side == "LEFT" then
+	if toLeft then
 		text:SetPoint("RIGHT", mark, showIcon and "LEFT" or "RIGHT", showIcon and -1 or 0, 0)
 	else
 		text:SetPoint("LEFT", mark, showIcon and "RIGHT" or "LEFT", showIcon and 1 or 0, 0)
+	end
+
+	local party = mark.party
+	party:SetFont(STANDARD_TEXT_FONT, db.textSize, "OUTLINE")
+	party:SetTextColor(db.pr, db.pg, db.pb)
+	party:SetText(partyLabel)
+	party:ClearAllPoints()
+	local gap = (label ~= "") and 4 or 0
+	if toLeft then
+		party:SetPoint("RIGHT", text, "LEFT", -gap, 0)
+	else
+		party:SetPoint("LEFT", text, "RIGHT", gap, 0)
 	end
 end
 
 local function UpdateUnit(unit)
 	local plate = C_NamePlate.GetNamePlateForUnit(unit)
 	if not plate then return end
-	local need, progress = false, nil
+	local need, progress, others = false, nil, nil
 	if db.enabled and not (db.hideInCombat and inCombat) then
 		local _
-		need, _, progress = UnitIsQuestMob(unit)
+		need, _, progress, others = UnitIsQuestMob(unit)
 	end
-	if need then
+	-- Not needed by me, but a group member still does.
+	local partyOnly = not need and db.showParty and others ~= nil and #others > 0
+	if need or partyOnly then
 		local mark = marks[plate]
 		if not mark then
 			mark = QM.CreateMark(plate)
@@ -343,7 +392,7 @@ local function UpdateUnit(unit)
 		end
 		local uf = plate.UnitFrame
 		local bar = uf and (uf.healthBar or uf.HealthBarsContainer or uf.healthbar)
-		QM.RenderMark(mark, bar or plate, progress)
+		QM.RenderMark(mark, bar or plate, progress, others, partyOnly)
 		mark:Show()
 	elseif marks[plate] then
 		marks[plate]:Hide()
@@ -449,8 +498,12 @@ local function Debug()
 		Print("target a mob and run /qmm debug again to see what its tooltip says.")
 		return
 	end
-	local need, method = UnitIsQuestMob("target")
+	local need, method, progress, others = UnitIsQuestMob("target")
 	Print(("target: quest mob = %s (via %s)"):format(tostring(need), tostring(method)))
+	if progress then Print(("  mine: %d/%d"):format(progress.cur, progress.max)) end
+	for _, o in ipairs(others or {}) do
+		Print(("  %s: %d/%d"):format(tostring(o.name), o.cur, o.max))
+	end
 	local lines = TooltipLines("target")
 	for i, line in ipairs(lines or {}) do
 		Print(("  %d [%s] %s"):format(i, line.kind or (questTitles[line.text] and "title?" or "-"), line.text))

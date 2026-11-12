@@ -7,7 +7,7 @@ Shows a yellow **!** on the nameplate of every mob you still need for a quest in
 - A yellow ! next to the health bar of mobs that count for one of your quests
 - The mark disappears as soon as your objective for that mob is done
 - No quest database: it reads what the game itself says in the mob's tooltip
-- In a group only your own progress counts
+- In a group: your own progress, plus what your group members still need in a second colour (optional)
 - Shows your progress next to the mark (3/8), or how many you still need
 - Settings window with live preview: position, size, text size and colour, opacity, hide in combat
 
