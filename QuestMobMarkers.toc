@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: Quest Mob Markers
+## Notes: Shows a yellow ! on the nameplate of mobs you still need for a quest. /qmm
+## Author: Robert-Jan
+## Version: @project-version@
+## SavedVariables: QuestMobMarkersDB
+
+Core.lua
