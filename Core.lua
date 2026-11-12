@@ -160,28 +160,56 @@ end
 -- Also returns the progress of my first unfinished objective, when known.
 local function LinesNeedUnit(lines)
 	local myName = UnitName("player")
-	local inQuest, mine = false, true
-	local myLines, otherLines, anyOpen = 0, 0, false
+	local inQuest, mine, sawMe = false, true, false
+	local myLines, otherLines, anyOpen, otherOpen = 0, 0, false, false
 	local need = false
-	local progress
+	local progress, otherProgress
+
+	-- The name on a "whose progress is this" line, however the client writes
+	-- it: "Name", "Name-Realm" or "Name:".
+	local function PlayerOn(text)
+		local name = text:match("^([^%-:]+)")
+		name = name and name:match("^%s*(.-)%s*$")
+		if name == myName then return name, true end
+		if groupNames[name] then return name, false end
+		return nil
+	end
 
 	local function CloseQuest()
-		if inQuest and (anyOpen or (myLines == 0 and otherLines == 0)) then need = true end
+		if not inQuest then return end
+		if anyOpen or (myLines == 0 and otherLines == 0) then
+			need = true
+		elseif otherOpen and not sawMe then
+			-- Only other names were listed, so the tooltip did not say which
+			-- lines are mine. Better a mark too many than none at all.
+			need = true
+			progress = progress or otherProgress
+		end
 	end
 
 	for _, line in ipairs(lines) do
 		local kind = line.kind
-		if not kind then
-			if questTitles[line.text] then kind = "title"
-			elseif inQuest and (line.text == myName or groupNames[line.text]) then kind = "player" end
+		local isMe
+		if kind == "player" then
+			local name, me = PlayerOn(line.text)
+			isMe = name ~= nil and me
+		elseif not kind then
+			if questTitles[line.text] then
+				kind = "title"
+			elseif inQuest and LineOpen(line) == nil then
+				local name, me = PlayerOn(line.text)
+				if name then kind, isMe = "player", me end
+			end
 		end
 
 		if kind == "title" then
 			CloseQuest()
-			inQuest, mine = true, true
-			myLines, otherLines, anyOpen = 0, 0, false
+			inQuest, mine, sawMe = true, true, false
+			myLines, otherLines, anyOpen, otherOpen = 0, 0, false, false
+			otherProgress = nil
 		elseif kind == "player" then
-			mine = (line.text == myName)
+			mine = isMe
+			if isMe then sawMe = true end
 		elseif inQuest then
 			local open, prog = LineOpen(line)
 			if open ~= nil then
@@ -193,6 +221,10 @@ local function LinesNeedUnit(lines)
 					end
 				else
 					otherLines = otherLines + 1
+					if open then
+						otherOpen = true
+						otherProgress = otherProgress or prog
+					end
 				end
 			end
 		end
@@ -410,6 +442,9 @@ local function Debug()
 	Print(("C_TooltipInfo: %s, UnitIsRelatedToActiveQuest: %s"):format(
 		tostring(C_TooltipInfo ~= nil and C_TooltipInfo.GetUnit ~= nil),
 		tostring(C_QuestLog ~= nil and C_QuestLog.UnitIsRelatedToActiveQuest ~= nil)))
+	local names = {}
+	for name in pairs(groupNames) do names[#names + 1] = name end
+	Print(("me: %s, group: %s"):format(tostring(UnitName("player")), #names > 0 and table.concat(names, ", ") or "none"))
 	if not UnitExists("target") then
 		Print("target a mob and run /qmm debug again to see what its tooltip says.")
 		return
