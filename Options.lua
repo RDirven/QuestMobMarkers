@@ -10,7 +10,7 @@ local SIDE_NAMES = { LEFT = "Left of the bar", RIGHT = "Right of the bar", TOP =
 local FORMATS = { "count", "left" }
 local FORMAT_NAMES = { count = "Progress (3/8)", left = "Still to go (5)" }
 
-local PREVIEW_PROGRESS = { cur = 3, max = 8 }
+local PREVIEW_PROGRESS = { { cur = 3, max = 8 }, { cur = 0, max = 4 } }
 local PREVIEW_OTHERS = { { name = "Friend", cur = 1, max = 8 } }
 
 function QM.RefreshPreview()

@@ -8,7 +8,7 @@ Shows a yellow **!** on the nameplate of every mob you still need for a quest in
 - The mark disappears as soon as your objective for that mob is done
 - No quest database: it reads what the game itself says in the mob's tooltip
 - In a group: your own progress, plus what your group members still need in a second colour (optional)
-- Shows your progress next to the mark (3/8), or how many you still need
+- Shows your progress next to the mark (3/8), or how many you still need; a mob that counts for several quests shows all of them (3/8 0/4)
 - Settings window with live preview: position, size, text size and colour, opacity, hide in combat
 
 Nameplates have to be on (default key: V).

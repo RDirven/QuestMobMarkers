@@ -159,13 +159,14 @@ local function LineOpen(line)
 end
 
 -- Does this tooltip say I still need this unit for a quest?
--- Also returns the progress of my first unfinished objective, when known.
+-- Also returns the progress of every unfinished objective of mine that has a
+-- number (one mob can count for several quests), as a list or nil.
 local function LinesNeedUnit(lines)
 	local myName = UnitName("player")
 	local inQuest, mine, sawMe = false, true, false
 	local myLines, otherLines, anyOpen, otherOpen = 0, 0, false, false
 	local need = false
-	local progress, otherProgress
+	local progress, otherProgress = {}, {}
 	local others = {}       -- unfinished progress of group members, one per player
 	local blockOthers = {}  -- the same, for the quest being read
 	local currentOther      -- whose lines are being read (nil = mine / unknown)
@@ -186,7 +187,7 @@ local function LinesNeedUnit(lines)
 			-- Only other names were listed, so the tooltip did not say which
 			-- lines are mine. Better a mark too many than none at all.
 			need = true
-			progress = progress or otherProgress
+			for _, p in ipairs(otherProgress) do progress[#progress + 1] = p end
 		else
 			if anyOpen or (myLines == 0 and otherLines == 0) then need = true end
 			for _, o in ipairs(blockOthers) do others[#others + 1] = o end
@@ -214,7 +215,7 @@ local function LinesNeedUnit(lines)
 			CloseQuest()
 			inQuest, mine, sawMe = true, true, false
 			myLines, otherLines, anyOpen, otherOpen = 0, 0, false, false
-			otherProgress, currentOther = nil, nil
+			otherProgress, currentOther = {}, nil
 		elseif kind == "player" then
 			mine = isMe
 			if isMe then sawMe = true end
@@ -226,13 +227,13 @@ local function LinesNeedUnit(lines)
 					myLines = myLines + 1
 					if open then
 						anyOpen = true
-						progress = progress or prog
+						if prog then progress[#progress + 1] = prog end
 					end
 				else
 					otherLines = otherLines + 1
 					if open then
 						otherOpen = true
-						otherProgress = otherProgress or prog
+						if prog then otherProgress[#otherProgress + 1] = prog end
 						if prog and currentOther and not currentOther.cur then
 							currentOther.cur, currentOther.max, currentOther.pct = prog.cur, prog.max, prog.pct
 							blockOthers[#blockOthers + 1] = currentOther
@@ -243,10 +244,11 @@ local function LinesNeedUnit(lines)
 		end
 	end
 	CloseQuest()
-	return need, progress, others
+	return need, (#progress > 0) and progress or nil, others
 end
 
--- Returns: needed (bool), how it was detected, progress table or nil.
+-- Returns: needed (bool), how it was detected, list of my progress or nil,
+-- list of group members' progress.
 local function UnitIsQuestMob(unit)
 	local isPlayer = UnitIsPlayer(unit)
 	if not IsSecret(isPlayer) and isPlayer then return false end
@@ -283,9 +285,12 @@ local function FormatProgress(progress)
 	return cur .. "/" .. max
 end
 
+-- All my open objectives for this mob: "3/8 0/4".
 local function ProgressText(progress)
-	if not (db.showProgress and progress) then return "" end
-	return FormatProgress(progress)
+	if not (db.showProgress and progress and #progress > 0) then return "" end
+	local parts = {}
+	for i, p in ipairs(progress) do parts[i] = FormatProgress(p) end
+	return table.concat(parts, " ")
 end
 
 -- The progress of every group member that still needs the mob: "1/8 4/8".
@@ -500,7 +505,9 @@ local function Debug()
 	end
 	local need, method, progress, others = UnitIsQuestMob("target")
 	Print(("target: quest mob = %s (via %s)"):format(tostring(need), tostring(method)))
-	if progress then Print(("  mine: %d/%d"):format(progress.cur, progress.max)) end
+	for _, p in ipairs(progress or {}) do
+		Print(("  mine: %d/%d"):format(p.cur, p.max))
+	end
 	for _, o in ipairs(others or {}) do
 		Print(("  %s: %d/%d"):format(tostring(o.name), o.cur, o.max))
 	end
