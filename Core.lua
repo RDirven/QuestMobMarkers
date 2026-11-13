@@ -290,7 +290,7 @@ local function ProgressText(progress)
 	if not (db.showProgress and progress and #progress > 0) then return "" end
 	local parts = {}
 	for i, p in ipairs(progress) do parts[i] = FormatProgress(p) end
-	return table.concat(parts, " ")
+	return table.concat(parts, "\n")
 end
 
 -- The progress of every group member that still needs the mob: "1/8 4/8".
@@ -298,7 +298,7 @@ local function PartyText(others)
 	if not (db.showParty and others and #others > 0) then return "" end
 	local parts = {}
 	for i, o in ipairs(others) do parts[i] = FormatProgress(o) end
-	return table.concat(parts, " ")
+	return table.concat(parts, "\n")
 end
 
 -- A mark is the ! plus the progress text. Also used for the preview in the
@@ -358,6 +358,8 @@ function QM.RenderMark(mark, anchor, progress, others, partyOnly)
 	local text = mark.text
 	text:SetFont(STANDARD_TEXT_FONT, db.textSize, "OUTLINE")
 	text:SetTextColor(db.r, db.g, db.b)
+	-- Several numbers go under each other, lined up against the !.
+	text:SetJustifyH(toLeft and "RIGHT" or "LEFT")
 	text:SetText(label)
 	text:ClearAllPoints()
 	if toLeft then
@@ -369,6 +371,7 @@ function QM.RenderMark(mark, anchor, progress, others, partyOnly)
 	local party = mark.party
 	party:SetFont(STANDARD_TEXT_FONT, db.textSize, "OUTLINE")
 	party:SetTextColor(db.pr, db.pg, db.pb)
+	party:SetJustifyH(toLeft and "RIGHT" or "LEFT")
 	party:SetText(partyLabel)
 	party:ClearAllPoints()
 	local gap = (label ~= "") and 4 or 0
